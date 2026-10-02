@@ -49,11 +49,19 @@ public:
     void pasteItems();
     void deleteSelectedItems();
 
+    // 選択アイテムの変形（拡大縮小・回転）
+    void rotateSelectedItems(double angleDelta);
+    void scaleSelectedItems(double scaleFactor);
+    void setSelectedItemsRotation(double degrees);
+    void setSelectedItemsScale(double scalePercent);
+
 signals:
     void zoomChanged(double zoomFactor);
     void requestPreviousPage();
     void requestNextPage();
     void itemSelected(const QColor &color, int strokeWidth, double opacity, int fontSize);
+    void itemTransformSelected(double rotation, double scalePercent);
+    void escapeTriggered();
     void fileDropped(const QString &filePath);
 
 protected:

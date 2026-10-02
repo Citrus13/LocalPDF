@@ -9,6 +9,7 @@
 #include <QSpinBox>
 #include <QDoubleSpinBox>
 #include <QColorDialog>
+#include <QFrame>
 
 PropertyPanel::PropertyPanel(QWidget *parent)
     : QWidget(parent), m_color(Qt::black) {
@@ -77,6 +78,58 @@ PropertyPanel::PropertyPanel(QWidget *parent)
         emit propertyChanged();
     });
 
+    auto *sep = new QFrame(this);
+    sep->setFrameShape(QFrame::HLine);
+    sep->setFrameShadow(QFrame::Sunken);
+    layout->addWidget(sep);
+
+    auto *transTitle = new QLabel("選択オブジェクト変形", this);
+    QFont tf = transTitle->font();
+    tf.setBold(true);
+    transTitle->setFont(tf);
+    layout->addWidget(transTitle);
+
+    // サイズ倍率
+    auto *scaleLayout = new QHBoxLayout();
+    scaleLayout->addWidget(new QLabel("サイズ (%):", this));
+    m_scaleSpin = new QDoubleSpinBox(this);
+    m_scaleSpin->setRange(10, 500);
+    m_scaleSpin->setSingleStep(10);
+    m_scaleSpin->setValue(100);
+    scaleLayout->addWidget(m_scaleSpin);
+    layout->addLayout(scaleLayout);
+    connect(m_scaleSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double val) {
+        emit scaleChanged(val);
+    });
+
+    // 回転角度
+    auto *rotLayout = new QHBoxLayout();
+    rotLayout->addWidget(new QLabel("回転 (度):", this));
+    m_rotationSpin = new QDoubleSpinBox(this);
+    m_rotationSpin->setRange(-360, 360);
+    m_rotationSpin->setSingleStep(15);
+    m_rotationSpin->setValue(0);
+    rotLayout->addWidget(m_rotationSpin);
+    layout->addLayout(rotLayout);
+    connect(m_rotationSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double val) {
+        emit rotationChanged(val);
+    });
+
+    // クイック回転ボタン
+    auto *btnLayout = new QHBoxLayout();
+    m_rotateCcwBtn = new QPushButton("↺ 90°左回転", this);
+    m_rotateCwBtn = new QPushButton("↻ 90°右回転", this);
+    btnLayout->addWidget(m_rotateCcwBtn);
+    btnLayout->addWidget(m_rotateCwBtn);
+    layout->addLayout(btnLayout);
+
+    connect(m_rotateCcwBtn, &QPushButton::clicked, this, [this]() {
+        emit rotateStepRequested(-90.0);
+    });
+    connect(m_rotateCwBtn, &QPushButton::clicked, this, [this]() {
+        emit rotateStepRequested(90.0);
+    });
+
     layout->addStretch();
 }
 
@@ -112,3 +165,14 @@ void PropertyPanel::setValues(const QColor &color, int strokeWidth, double opaci
     m_fontSpin->setValue(fontSize > 0 ? fontSize : 14);
     m_fontSpin->blockSignals(false);
 }
+
+void PropertyPanel::setTransformValues(double rotation, double scalePercent) {
+    m_rotationSpin->blockSignals(true);
+    m_rotationSpin->setValue(rotation);
+    m_rotationSpin->blockSignals(false);
+
+    m_scaleSpin->blockSignals(true);
+    m_scaleSpin->setValue(scalePercent);
+    m_scaleSpin->blockSignals(false);
+}
+

@@ -15,6 +15,7 @@ class DocumentView;
 class PropertyPanel;
 class QToolBar;
 class QComboBox;
+class QAction;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -69,6 +70,7 @@ private:
     QToolBar *m_pageToolBar;
     QToolBar *m_editToolBar;
     QComboBox *m_zoomCombo;
+    QAction *m_selectToolAction;
 
     std::unique_ptr<Document> m_document;
     int m_currentPageIndex;

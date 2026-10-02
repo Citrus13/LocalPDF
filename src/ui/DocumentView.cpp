@@ -126,6 +126,7 @@ void DocumentView::saveCurrentAnnotations() {
 
         PageAnnotation ann;
         ann.opacity = item->opacity();
+        ann.rotation = item->rotation();
 
         if (auto *textItem = dynamic_cast<QGraphicsTextItem*>(item)) {
             ann.type = AnnotationType::Text;
@@ -170,8 +171,11 @@ void DocumentView::saveCurrentAnnotations() {
         } else if (auto *pixItem = dynamic_cast<QGraphicsPixmapItem*>(item)) {
             ann.type = AnnotationType::Image;
             ann.image = pixItem->pixmap().toImage();
+            double itemSc = pixItem->scale();
+            if (itemSc <= 0.0) itemSc = 1.0;
             ann.rect = QRectF(pixItem->pos().x() / scale, pixItem->pos().y() / scale,
-                              pixItem->pixmap().width() / scale, pixItem->pixmap().height() / scale);
+                              (pixItem->pixmap().width() * itemSc) / scale,
+                              (pixItem->pixmap().height() * itemSc) / scale);
             m_currentPage->addAnnotation(ann);
         }
     }
@@ -189,6 +193,10 @@ void DocumentView::restoreAnnotations() {
             item->setDefaultTextColor(ann.color);
             item->setPos(ann.rect.topLeft() * scale);
             item->setOpacity(ann.opacity);
+            item->setTransformOriginPoint(item->boundingRect().center());
+            if (ann.rotation != 0.0) {
+                item->setRotation(ann.rotation);
+            }
             item->setZValue(5);
             item->setTextInteractionFlags(Qt::TextEditorInteraction);
             item->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable | QGraphicsItem::ItemIsFocusable);
@@ -203,6 +211,10 @@ void DocumentView::restoreAnnotations() {
                 QPen pen(ann.color, ann.strokeWidth * scale, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
                 auto *item = m_scene->addPath(path, pen);
                 item->setOpacity(ann.opacity);
+                item->setTransformOriginPoint(item->boundingRect().center());
+                if (ann.rotation != 0.0) {
+                    item->setRotation(ann.rotation);
+                }
                 item->setZValue(3);
                 item->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable);
             }
@@ -218,6 +230,10 @@ void DocumentView::restoreAnnotations() {
                 auto *item = m_scene->addPath(path, pen);
                 item->setData(0, "highlight");
                 item->setOpacity(ann.opacity > 0 ? ann.opacity : 0.5);
+                item->setTransformOriginPoint(item->boundingRect().center());
+                if (ann.rotation != 0.0) {
+                    item->setRotation(ann.rotation);
+                }
                 item->setZValue(3);
                 item->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable);
             }
@@ -230,6 +246,10 @@ void DocumentView::restoreAnnotations() {
             auto *item = m_scene->addRect(r, pen, brush);
             item->setPos(ann.rect.topLeft() * scale);
             item->setOpacity(ann.opacity);
+            item->setTransformOriginPoint(item->boundingRect().center());
+            if (ann.rotation != 0.0) {
+                item->setRotation(ann.rotation);
+            }
             item->setZValue(2);
             item->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable);
             break;
@@ -241,6 +261,10 @@ void DocumentView::restoreAnnotations() {
             auto *item = m_scene->addRect(r, pen, brush);
             item->setData(0, "whiteout");
             item->setPos(ann.rect.topLeft() * scale);
+            item->setTransformOriginPoint(item->boundingRect().center());
+            if (ann.rotation != 0.0) {
+                item->setRotation(ann.rotation);
+            }
             item->setZValue(2);
             item->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable);
             break;
@@ -251,6 +275,10 @@ void DocumentView::restoreAnnotations() {
                     (ann.rect.size() * scale).toSize(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
                 auto *item = m_scene->addPixmap(pix);
                 item->setPos(ann.rect.topLeft() * scale);
+                item->setTransformOriginPoint(pix.width() / 2.0, pix.height() / 2.0);
+                if (ann.rotation != 0.0) {
+                    item->setRotation(ann.rotation);
+                }
                 item->setZValue(4);
                 item->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable);
             }
@@ -416,6 +444,10 @@ void DocumentView::onSelectionChanged() {
     }
 
     emit itemSelected(col, width, op, fontSz);
+
+    double rot = item->rotation();
+    double sc = (item->scale() <= 0.0 ? 1.0 : item->scale()) * 100.0;
+    emit itemTransformSelected(rot, sc);
 }
 
 void DocumentView::addImageFromClipboard(const QImage &image) {
@@ -423,12 +455,64 @@ void DocumentView::addImageFromClipboard(const QImage &image) {
 
     QPixmap pix = QPixmap::fromImage(image);
     auto *item = m_scene->addPixmap(pix);
+    item->setTransformOriginPoint(pix.width() / 2.0, pix.height() / 2.0);
     item->setZValue(4);
     item->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable);
     item->setPos(50, 50);
 
     if (m_undoStack) {
         m_undoStack->push(new AddItemCommand(m_scene, item));
+    }
+}
+
+void DocumentView::rotateSelectedItems(double angleDelta) {
+    for (auto *item : m_scene->selectedItems()) {
+        if (item != m_pdfPageItem) {
+            QRectF br = item->boundingRect();
+            item->setTransformOriginPoint(br.center());
+            item->setRotation(item->rotation() + angleDelta);
+        }
+    }
+    auto sel = m_scene->selectedItems();
+    if (!sel.isEmpty() && sel.first() != m_pdfPageItem) {
+        emit itemTransformSelected(sel.first()->rotation(), (sel.first()->scale() <= 0.0 ? 1.0 : sel.first()->scale()) * 100.0);
+    }
+}
+
+void DocumentView::scaleSelectedItems(double scaleFactor) {
+    for (auto *item : m_scene->selectedItems()) {
+        if (item != m_pdfPageItem) {
+            QRectF br = item->boundingRect();
+            item->setTransformOriginPoint(br.center());
+            double currentScale = item->scale() <= 0.0 ? 1.0 : item->scale();
+            item->setScale(currentScale * scaleFactor);
+        }
+    }
+    auto sel = m_scene->selectedItems();
+    if (!sel.isEmpty() && sel.first() != m_pdfPageItem) {
+        emit itemTransformSelected(sel.first()->rotation(), (sel.first()->scale() <= 0.0 ? 1.0 : sel.first()->scale()) * 100.0);
+    }
+}
+
+void DocumentView::setSelectedItemsRotation(double degrees) {
+    for (auto *item : m_scene->selectedItems()) {
+        if (item != m_pdfPageItem) {
+            QRectF br = item->boundingRect();
+            item->setTransformOriginPoint(br.center());
+            item->setRotation(degrees);
+        }
+    }
+}
+
+void DocumentView::setSelectedItemsScale(double scalePercent) {
+    double sc = scalePercent / 100.0;
+    if (sc <= 0.05) sc = 0.05;
+    for (auto *item : m_scene->selectedItems()) {
+        if (item != m_pdfPageItem) {
+            QRectF br = item->boundingRect();
+            item->setTransformOriginPoint(br.center());
+            item->setScale(sc);
+        }
     }
 }
 
@@ -701,6 +785,27 @@ void DocumentView::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 void DocumentView::keyPressEvent(QKeyEvent *event) {
+    // 0. ESCキーで選択・移動ツールに戻る
+    if (event->key() == Qt::Key_Escape) {
+        if (m_isDrawing) {
+            if (m_currentPathItem) {
+                m_scene->removeItem(m_currentPathItem);
+                delete m_currentPathItem;
+                m_currentPathItem = nullptr;
+            }
+            if (m_currentRectItem) {
+                m_scene->removeItem(m_currentRectItem);
+                delete m_currentRectItem;
+                m_currentRectItem = nullptr;
+            }
+            m_isDrawing = false;
+        }
+        setToolMode(0);
+        emit escapeTriggered();
+        event->accept();
+        return;
+    }
+
     // 1. テキスト編集中なら、文字入力を最優先（Backspaceでアイテム消去しない）
     QGraphicsItem *focus = m_scene->focusItem();
     if (focus) {
@@ -739,6 +844,30 @@ void DocumentView::keyPressEvent(QKeyEvent *event) {
         return;
     }
 
+    // 5. 選択中オブジェクトのキー操作（拡大縮小・回転）
+    if (!m_scene->selectedItems().isEmpty()) {
+        if (event->key() == Qt::Key_Plus || event->key() == Qt::Key_Equal) {
+            scaleSelectedItems(1.1);
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_Minus) {
+            scaleSelectedItems(0.9);
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_BracketLeft) {
+            rotateSelectedItems(-15.0);
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_BracketRight) {
+            rotateSelectedItems(15.0);
+            event->accept();
+            return;
+        }
+    }
+
     QGraphicsView::keyPressEvent(event);
 }
 
@@ -765,14 +894,31 @@ void DocumentView::contextMenuEvent(QContextMenuEvent *event) {
     if (item && item != m_pdfPageItem) {
         item->setSelected(true);
         QMenu menu(this);
-        QAction *delAct = menu.addAction("🗑 このオブジェクトを削除");
+        QAction *rotCwAct = menu.addAction("↻ 90°右回転");
+        QAction *rotCcwAct = menu.addAction("↺ 90°左回転");
+        menu.addSeparator();
+        QAction *scaleUpAct = menu.addAction("🔍 拡大 (+20%)");
+        QAction *scaleDownAct = menu.addAction("🔍 縮小 (-20%)");
+        QAction *scaleResetAct = menu.addAction("📐 サイズを100%にリセット");
+        menu.addSeparator();
+        QAction *delAct = menu.addAction("🗑 このオブジェクトを削除 (Delete)");
         QAction *copyAct = menu.addAction("📋 複製（コピー＆ペースト）");
         menu.addSeparator();
         QAction *frontAct = menu.addAction("▲ 最前面へ移動");
         QAction *backAct = menu.addAction("▼ 最背面へ移動");
 
         QAction *sel = menu.exec(event->globalPos());
-        if (sel == delAct) {
+        if (sel == rotCwAct) {
+            rotateSelectedItems(90.0);
+        } else if (sel == rotCcwAct) {
+            rotateSelectedItems(-90.0);
+        } else if (sel == scaleUpAct) {
+            scaleSelectedItems(1.2);
+        } else if (sel == scaleDownAct) {
+            scaleSelectedItems(0.8);
+        } else if (sel == scaleResetAct) {
+            setSelectedItemsScale(100.0);
+        } else if (sel == delAct) {
             deleteSelectedItems();
         } else if (sel == copyAct) {
             copySelectedItems();

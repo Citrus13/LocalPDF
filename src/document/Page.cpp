@@ -130,6 +130,13 @@ QImage Page::render(const QSize &targetSize) const {
             painter.save();
             painter.setOpacity(ann.opacity);
 
+            if (ann.rotation != 0.0) {
+                QPointF center = ann.rect.center();
+                painter.translate(center);
+                painter.rotate(ann.rotation);
+                painter.translate(-center);
+            }
+
             switch (ann.type) {
             case AnnotationType::Text: {
                 painter.setFont(ann.font);

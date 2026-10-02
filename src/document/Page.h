@@ -33,6 +33,7 @@ struct PageAnnotation {
     QColor fillColor;         // 塗りつぶし色 (Rect)
     double strokeWidth;       // 線幅
     double opacity;           // 不透明度
+    double rotation;          // オブジェクトの回転角度（度）
     QImage image;             // 画像 (Image)
 };
 

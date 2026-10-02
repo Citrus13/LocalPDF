@@ -24,6 +24,7 @@ public:
     int fontSize() const;
 
     void setValues(const QColor &color, int strokeWidth, double opacity, int fontSize);
+    void setTransformValues(double rotation, double scalePercent);
 
 signals:
     void propertyChanged();
@@ -31,13 +32,21 @@ signals:
     void strokeWidthChanged(int width);
     void opacityChanged(double opacity);
     void fontSizeChanged(int size);
+    void rotationChanged(double degrees);
+    void scaleChanged(double scalePercent);
+    void rotateStepRequested(double angleDelta);
 
 private:
     QPushButton *m_colorBtn;
     QSpinBox *m_widthSpin;
     QDoubleSpinBox *m_opacitySpin;
     QSpinBox *m_fontSpin;
+    QDoubleSpinBox *m_rotationSpin;
+    QDoubleSpinBox *m_scaleSpin;
+    QPushButton *m_rotateCwBtn;
+    QPushButton *m_rotateCcwBtn;
     QColor m_color;
 };
 
 #endif // PROPERTYPANEL_H
+

@@ -29,6 +29,8 @@ MainWindow::MainWindow(QWidget *parent)
       m_thumbnailPanel(new ThumbnailPanel(this)),
       m_documentView(new DocumentView(this)),
       m_propertyPanel(new PropertyPanel(this)),
+      m_zoomCombo(nullptr),
+      m_selectToolAction(nullptr),
       m_document(std::make_unique<Document>()),
       m_currentPageIndex(0),
       m_undoStack(new QUndoStack(this)) {
@@ -65,6 +67,13 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_documentView, &DocumentView::requestPreviousPage, this, &MainWindow::onPreviousPage);
     connect(m_documentView, &DocumentView::requestNextPage, this, &MainWindow::onNextPage);
     connect(m_documentView, &DocumentView::itemSelected, m_propertyPanel, &PropertyPanel::setValues);
+    connect(m_documentView, &DocumentView::itemTransformSelected, m_propertyPanel, &PropertyPanel::setTransformValues);
+    connect(m_documentView, &DocumentView::escapeTriggered, this, [this]() {
+        if (m_selectToolAction) {
+            m_selectToolAction->setChecked(true);
+        }
+        onToolTriggered(0);
+    });
     connect(m_documentView, &DocumentView::fileDropped, this, &MainWindow::onFileDropped);
 
     // プロパティパネル変更のビュー反映
@@ -72,6 +81,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_propertyPanel, &PropertyPanel::strokeWidthChanged, m_documentView, &DocumentView::setStrokeWidth);
     connect(m_propertyPanel, &PropertyPanel::opacityChanged, m_documentView, &DocumentView::setItemOpacity);
     connect(m_propertyPanel, &PropertyPanel::fontSizeChanged, m_documentView, &DocumentView::setFontSize);
+    connect(m_propertyPanel, &PropertyPanel::rotationChanged, m_documentView, &DocumentView::setSelectedItemsRotation);
+    connect(m_propertyPanel, &PropertyPanel::scaleChanged, m_documentView, &DocumentView::setSelectedItemsScale);
+    connect(m_propertyPanel, &PropertyPanel::rotateStepRequested, m_documentView, &DocumentView::rotateSelectedItems);
 }
 
 void MainWindow::createMenusAndActions() {
@@ -106,7 +118,7 @@ void MainWindow::createMenusAndActions() {
     pageMenu->addAction("右に90°回転(&R)", this, &MainWindow::onRotateClockwise, QKeySequence(Qt::CTRL | Qt::Key_R));
     pageMenu->addAction("左に90°回転(&L)", this, &MainWindow::onRotateCounterClockwise, QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
     pageMenu->addSeparator();
-    pageMenu->addAction("現在のページを削除(&X)", this, &MainWindow::onDeletePage, QKeySequence::Delete);
+    pageMenu->addAction("現在のページを削除(&X)", this, &MainWindow::onDeletePage, QKeySequence(Qt::CTRL | Qt::Key_Delete));
     pageMenu->addAction("ページを抽出（分割）(&S)...", this, &MainWindow::onExtractPages);
 }
 
@@ -157,12 +169,12 @@ void MainWindow::createToolbars() {
     auto *toolGroup = new QActionGroup(this);
     toolGroup->setExclusive(true);
 
-    QAction *selectAct = m_editToolBar->addAction("↖ 選択・移動 (V)");
-    selectAct->setCheckable(true);
-    selectAct->setChecked(true);
-    selectAct->setShortcut(QKeySequence(Qt::Key_V));
-    toolGroup->addAction(selectAct);
-    connect(selectAct, &QAction::triggered, this, [this]() { onToolTriggered(0); });
+    m_selectToolAction = m_editToolBar->addAction("↖ 選択・移動 (V)");
+    m_selectToolAction->setCheckable(true);
+    m_selectToolAction->setChecked(true);
+    m_selectToolAction->setShortcut(QKeySequence(Qt::Key_V));
+    toolGroup->addAction(m_selectToolAction);
+    connect(m_selectToolAction, &QAction::triggered, this, [this]() { onToolTriggered(0); });
 
     QAction *handAct = m_editToolBar->addAction("✋ 手のひら (H)");
     handAct->setCheckable(true);
@@ -245,6 +257,26 @@ void MainWindow::createToolbars() {
     fontSpin->setValue(14);
     connect(fontSpin, QOverload<int>::of(&QSpinBox::valueChanged), m_documentView, &DocumentView::setFontSize);
     m_editToolBar->addWidget(fontSpin);
+
+    m_editToolBar->addSeparator();
+
+    auto *rotAct = m_editToolBar->addAction("↻ 選択回転");
+    rotAct->setToolTip("選択中のオブジェクトを90°回転");
+    connect(rotAct, &QAction::triggered, this, [this]() {
+        m_documentView->rotateSelectedItems(90.0);
+    });
+
+    auto *scaleUpAct = m_editToolBar->addAction("🔍＋ 拡大");
+    scaleUpAct->setToolTip("選択中のオブジェクトを拡大 (+20%)");
+    connect(scaleUpAct, &QAction::triggered, this, [this]() {
+        m_documentView->scaleSelectedItems(1.2);
+    });
+
+    auto *scaleDownAct = m_editToolBar->addAction("🔍－ 縮小");
+    scaleDownAct->setToolTip("選択中のオブジェクトを縮小 (-20%)");
+    connect(scaleDownAct, &QAction::triggered, this, [this]() {
+        m_documentView->scaleSelectedItems(0.8);
+    });
 }
 
 void MainWindow::openPdfFile(const QString &filePath) {
