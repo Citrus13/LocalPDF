@@ -12,6 +12,11 @@
 #include <QFileDialog>
 #include <QToolBar>
 #include <QComboBox>
+#include <QSpinBox>
+#include <QPushButton>
+#include <QLabel>
+#include <QColorDialog>
+#include <QActionGroup>
 #include <QClipboard>
 #include <QApplication>
 #include <QKeyEvent>
@@ -30,13 +35,13 @@ MainWindow::MainWindow(QWidget *parent)
 
     setCentralWidget(m_documentView);
 
-    // 左ドック: サムネイル
+    // 左ドック: ページ一覧サムネイル
     auto *leftDock = new QDockWidget("ページ一覧", this);
     leftDock->setWidget(m_thumbnailPanel);
     addDockWidget(Qt::LeftDockWidgetArea, leftDock);
 
     // 右ドック: プロパティ
-    auto *rightDock = new QDockWidget("プロパティ", this);
+    auto *rightDock = new QDockWidget("詳細プロパティ", this);
     rightDock->setWidget(m_propertyPanel);
     addDockWidget(Qt::RightDockWidgetArea, rightDock);
 
@@ -103,71 +108,88 @@ void MainWindow::createMenusAndActions() {
 }
 
 void MainWindow::createToolbars() {
-    m_mainToolBar = addToolBar("メイン操作");
+    // 1. メイン操作ツールバー（上部）
+    m_mainToolBar = addToolBar("ファイル・ページ操作");
+    m_mainToolBar->setMovable(false);
 
-    m_mainToolBar->addAction("開く", this, &MainWindow::onOpenTriggered);
-    m_mainToolBar->addAction("保存", this, &MainWindow::onSaveTriggered);
-    m_mainToolBar->addAction("PDF出力", this, &MainWindow::onExportTriggered);
-    m_mainToolBar->addAction("画像出力", this, &MainWindow::onExportImages);
-
-    m_mainToolBar->addSeparator();
-
-    m_mainToolBar->addAction(m_undoStack->createUndoAction(this, "元に戻す"));
-    m_mainToolBar->addAction(m_undoStack->createRedoAction(this, "やり直す"));
+    m_mainToolBar->addAction("📂 開く", this, &MainWindow::onOpenTriggered);
+    m_mainToolBar->addAction("📄 PDF出力", this, &MainWindow::onExportTriggered);
+    m_mainToolBar->addAction("🖼 画像出力", this, &MainWindow::onExportImages);
+    m_mainToolBar->addAction("💾 保存", this, &MainWindow::onSaveTriggered);
 
     m_mainToolBar->addSeparator();
 
-    // ページ操作ツールバー
-    m_pageToolBar = addToolBar("ページ操作");
-    m_pageToolBar->addAction("◀ 前頁", this, &MainWindow::onPreviousPage);
-    m_pageToolBar->addAction("次頁 ▶", this, &MainWindow::onNextPage);
-    m_pageToolBar->addSeparator();
-    m_pageToolBar->addAction("▲ 前へ", this, &MainWindow::onMovePageUp);
-    m_pageToolBar->addAction("▼ 後へ", this, &MainWindow::onMovePageDown);
-    m_pageToolBar->addSeparator();
-    m_pageToolBar->addAction("↻ 右回転", this, &MainWindow::onRotateClockwise);
-    m_pageToolBar->addAction("↺ 左回転", this, &MainWindow::onRotateCounterClockwise);
-    m_pageToolBar->addAction("🗑 削除", this, &MainWindow::onDeletePage);
-    m_pageToolBar->addSeparator();
-    m_pageToolBar->addAction("＋ PDF結合", this, &MainWindow::onMergePdf);
-    m_pageToolBar->addAction("＋ 画像追加", this, [this]() {
+    m_mainToolBar->addAction("◀ 前頁", this, &MainWindow::onPreviousPage);
+    m_mainToolBar->addAction("次頁 ▶", this, &MainWindow::onNextPage);
+
+    m_mainToolBar->addSeparator();
+
+    m_mainToolBar->addAction("↻ 右90°回転", this, &MainWindow::onRotateClockwise);
+    m_mainToolBar->addAction("↺ 左90°回転", this, &MainWindow::onRotateCounterClockwise);
+    m_mainToolBar->addAction("🗑 ページ削除", this, &MainWindow::onDeletePage);
+
+    m_mainToolBar->addSeparator();
+
+    m_mainToolBar->addAction("＋ PDF結合", this, &MainWindow::onMergePdf);
+    m_mainToolBar->addAction("＋ 画像追加", this, [this]() {
         onInsertImagesAt(m_document->pageCount() == 0 ? 0 : m_currentPageIndex + 1);
     });
-    m_pageToolBar->addAction("✂ 抽出", this, &MainWindow::onExtractPages);
+    m_mainToolBar->addAction("✂ 抽出", this, &MainWindow::onExtractPages);
 
     m_mainToolBar->addSeparator();
 
+    m_mainToolBar->addWidget(new QLabel(" ズーム: ", this));
     m_zoomCombo = new QComboBox(this);
     m_zoomCombo->addItems({"50%", "75%", "100%", "125%", "150%", "200%"});
     m_zoomCombo->setCurrentIndex(2);
     connect(m_zoomCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::onZoomComboChanged);
     m_mainToolBar->addWidget(m_zoomCombo);
 
-    // 下部/編集ツールバー
-    m_editToolBar = new QToolBar("編集ツール", this);
-    addToolBar(Qt::BottomToolBarArea, m_editToolBar);
+    addToolBarBreak();
 
-    QAction *selectAct = m_editToolBar->addAction("↖ 選択");
+    // 2. 編集・注釈ツールバー（上部2段目：誰でも一目でわかる配置）
+    m_editToolBar = addToolBar("編集・注釈ツール");
+    m_editToolBar->setMovable(false);
+
+    auto *toolGroup = new QActionGroup(this);
+    toolGroup->setExclusive(true);
+
+    QAction *selectAct = m_editToolBar->addAction("↖ 選択・移動");
+    selectAct->setCheckable(true);
+    selectAct->setChecked(true);
+    toolGroup->addAction(selectAct);
     connect(selectAct, &QAction::triggered, this, [this]() { onToolTriggered(0); });
 
     QAction *handAct = m_editToolBar->addAction("✋ 手のひら");
+    handAct->setCheckable(true);
+    toolGroup->addAction(handAct);
     connect(handAct, &QAction::triggered, this, [this]() { onToolTriggered(7); });
 
     m_editToolBar->addSeparator();
 
-    QAction *textAct = m_editToolBar->addAction("T テキスト");
-    connect(textAct, &QAction::triggered, this, [this]() { onToolTriggered(1); });
-
-    QAction *highlightAct = m_editToolBar->addAction("🖍 蛍光ペン");
-    connect(highlightAct, &QAction::triggered, this, [this]() { onToolTriggered(2); });
-
-    QAction *penAct = m_editToolBar->addAction("🖊 ペン");
+    QAction *penAct = m_editToolBar->addAction("🖊 ペン（手書き）");
+    penAct->setCheckable(true);
+    toolGroup->addAction(penAct);
     connect(penAct, &QAction::triggered, this, [this]() { onToolTriggered(3); });
 
-    QAction *rectAct = m_editToolBar->addAction("□ 矩形");
+    QAction *highlightAct = m_editToolBar->addAction("🖍 蛍光ペン");
+    highlightAct->setCheckable(true);
+    toolGroup->addAction(highlightAct);
+    connect(highlightAct, &QAction::triggered, this, [this]() { onToolTriggered(2); });
+
+    QAction *textAct = m_editToolBar->addAction("T 文字入れ");
+    textAct->setCheckable(true);
+    toolGroup->addAction(textAct);
+    connect(textAct, &QAction::triggered, this, [this]() { onToolTriggered(1); });
+
+    QAction *rectAct = m_editToolBar->addAction("□ 四角形");
+    rectAct->setCheckable(true);
+    toolGroup->addAction(rectAct);
     connect(rectAct, &QAction::triggered, this, [this]() { onToolTriggered(4); });
 
-    QAction *whiteoutAct = m_editToolBar->addAction("■ 白塗り");
+    QAction *whiteoutAct = m_editToolBar->addAction("■ 白塗り消し");
+    whiteoutAct->setCheckable(true);
+    toolGroup->addAction(whiteoutAct);
     connect(whiteoutAct, &QAction::triggered, this, [this]() { onToolTriggered(5); });
 
     QAction *imageAct = m_editToolBar->addAction("🖼 画像挿入");
@@ -178,6 +200,35 @@ void MainWindow::createToolbars() {
             m_documentView->addImageFromClipboard(img);
         }
     });
+
+    m_editToolBar->addSeparator();
+
+    // ツールバー直結の色・太さ・文字サイズ選択
+    m_editToolBar->addWidget(new QLabel(" 色: ", this));
+    auto *colorBtn = new QPushButton(this);
+    colorBtn->setStyleSheet("background-color: black; width: 30px; height: 20px; border: 1px solid #888;");
+    connect(colorBtn, &QPushButton::clicked, this, [this, colorBtn]() {
+        QColor col = QColorDialog::getColor(Qt::black, this, "描画色を選択");
+        if (col.isValid()) {
+            colorBtn->setStyleSheet(QString("background-color: %1; width: 30px; height: 20px; border: 1px solid #888;").arg(col.name()));
+            m_documentView->setCurrentColor(col);
+        }
+    });
+    m_editToolBar->addWidget(colorBtn);
+
+    m_editToolBar->addWidget(new QLabel(" 太さ: ", this));
+    auto *widthSpin = new QSpinBox(this);
+    widthSpin->setRange(1, 50);
+    widthSpin->setValue(2);
+    connect(widthSpin, QOverload<int>::of(&QSpinBox::valueChanged), m_documentView, &DocumentView::setStrokeWidth);
+    m_editToolBar->addWidget(widthSpin);
+
+    m_editToolBar->addWidget(new QLabel(" 文字サイズ: ", this));
+    auto *fontSpin = new QSpinBox(this);
+    fontSpin->setRange(8, 72);
+    fontSpin->setValue(14);
+    connect(fontSpin, QOverload<int>::of(&QSpinBox::valueChanged), m_documentView, &DocumentView::setFontSize);
+    m_editToolBar->addWidget(fontSpin);
 }
 
 void MainWindow::openPdfFile(const QString &filePath) {

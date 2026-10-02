@@ -84,32 +84,46 @@ void Page::clearAnnotations() {
 QImage Page::render(const QSize &targetSize) const {
     QImage result;
     QSize baseSize = m_size;
+    if (baseSize.isEmpty()) {
+        baseSize = QSize(595, 842);
+    }
+
+    // 元ページの縦横比を維持した未回転サイズを計算
+    double scale = 1.0;
+    if (m_rotation == 90 || m_rotation == 270) {
+        scale = static_cast<double>(targetSize.width()) / baseSize.height();
+    } else {
+        scale = static_cast<double>(targetSize.width()) / baseSize.width();
+    }
+    if (scale <= 0.0) scale = 1.0;
+
+    QSize unrotatedSize = baseSize * scale;
 
     if (m_isImagePage) {
         QImage srcImg(m_sourcePath);
         if (!srcImg.isNull()) {
-            result = srcImg.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            result = srcImg.scaled(unrotatedSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
         }
     } else {
         QPdfDocument doc;
         if (doc.load(m_sourcePath) == QPdfDocument::Error::None) {
-            result = doc.render(m_sourcePageIndex, targetSize);
+            result = doc.render(m_sourcePageIndex, unrotatedSize);
         }
     }
 
     if (result.isNull()) {
-        result = QImage(targetSize, QImage::Format_ARGB32_Premultiplied);
+        result = QImage(unrotatedSize, QImage::Format_ARGB32_Premultiplied);
         result.fill(Qt::white);
     }
 
-    // 注釈のオーバーレイ描画
+    // 注釈のオーバーレイ描画（未回転の座標系で描画）
     if (!m_annotations.isEmpty()) {
         QPainter painter(&result);
         painter.setRenderHint(QPainter::Antialiasing);
         painter.setRenderHint(QPainter::SmoothPixmapTransform);
 
-        double scaleX = static_cast<double>(result.width()) / (baseSize.width() > 0 ? baseSize.width() : 1);
-        double scaleY = static_cast<double>(result.height()) / (baseSize.height() > 0 ? baseSize.height() : 1);
+        double scaleX = static_cast<double>(result.width()) / baseSize.width();
+        double scaleY = static_cast<double>(result.height()) / baseSize.height();
         painter.scale(scaleX, scaleY);
 
         for (const auto &ann : m_annotations) {
@@ -165,6 +179,7 @@ QImage Page::render(const QSize &targetSize) const {
         }
     }
 
+    // 最後に指定角度回転
     if (m_rotation != 0) {
         QTransform trans;
         trans.rotate(m_rotation);

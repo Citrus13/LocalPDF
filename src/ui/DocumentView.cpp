@@ -217,27 +217,24 @@ void DocumentView::renderCurrentPage() {
 
     if (!m_currentPage) return;
 
-    QSize pSize = m_currentPage->size() * m_zoomLevel;
-    if (m_currentPage->rotation() == 90 || m_currentPage->rotation() == 270) {
-        pSize.transpose();
-    }
+    QSize unrotatedSize = m_currentPage->size() * m_zoomLevel;
 
     // 下絵（元PDFまたは画像）のレンダリング
     QImage img;
     if (m_currentPage->isImagePage()) {
         QImage srcImg(m_currentPage->sourcePath());
         if (!srcImg.isNull()) {
-            img = srcImg.scaled(pSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            img = srcImg.scaled(unrotatedSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
         }
     } else {
         QPdfDocument doc;
         if (doc.load(m_currentPage->sourcePath()) == QPdfDocument::Error::None) {
-            img = doc.render(m_currentPage->sourcePageIndex(), pSize);
+            img = doc.render(m_currentPage->sourcePageIndex(), unrotatedSize);
         }
     }
 
     if (img.isNull()) {
-        img = QImage(pSize, QImage::Format_ARGB32_Premultiplied);
+        img = QImage(unrotatedSize, QImage::Format_ARGB32_Premultiplied);
         img.fill(Qt::white);
     }
 
