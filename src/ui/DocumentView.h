@@ -59,9 +59,6 @@ public:
     // 現在のページ（背景＋注釈すべて）を高画質レンダリングして取得
     QImage captureCurrentPageImage(int maxDimension = 600) const;
 
-    // テキスト編集ダイアログを開く
-    void openTextEditorDialog(QGraphicsTextItem *item = nullptr, const QPointF &pos = QPointF());
-
 signals:
     void zoomChanged(double zoomFactor);
     void requestPreviousPage();
@@ -81,6 +78,9 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
+
+    // IME（日本語入力）対応
+    void inputMethodEvent(QInputMethodEvent *event) override;
 
     // ファイルドラッグ＆ドロップ対応
     void dragEnterEvent(QDragEnterEvent *event) override;

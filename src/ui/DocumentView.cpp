@@ -8,6 +8,7 @@
 #include <QKeyEvent>
 #include <QScrollBar>
 #include <QGraphicsTextItem>
+#include <QTextCursor>
 #include <QGraphicsRectItem>
 #include <QGraphicsPixmapItem>
 #include <QGraphicsPathItem>
@@ -70,6 +71,56 @@ public:
 private:
     QGraphicsScene *m_scene;
     QGraphicsItem *m_item;
+};
+
+class RotateItemCommand : public QUndoCommand {
+public:
+    RotateItemCommand(QGraphicsItem *item, double oldAngle, double newAngle, QUndoCommand *parent = nullptr)
+        : QUndoCommand("回転", parent), m_item(item), m_oldAngle(oldAngle), m_newAngle(newAngle) {}
+
+    void undo() override {
+        if (m_item) {
+            m_item->setTransformOriginPoint(m_item->boundingRect().center());
+            m_item->setRotation(m_oldAngle);
+        }
+    }
+
+    void redo() override {
+        if (m_item) {
+            m_item->setTransformOriginPoint(m_item->boundingRect().center());
+            m_item->setRotation(m_newAngle);
+        }
+    }
+
+private:
+    QGraphicsItem *m_item;
+    double m_oldAngle;
+    double m_newAngle;
+};
+
+class ScaleItemCommand : public QUndoCommand {
+public:
+    ScaleItemCommand(QGraphicsItem *item, double oldScale, double newScale, QUndoCommand *parent = nullptr)
+        : QUndoCommand("サイズ変更", parent), m_item(item), m_oldScale(oldScale), m_newScale(newScale) {}
+
+    void undo() override {
+        if (m_item) {
+            m_item->setTransformOriginPoint(m_item->boundingRect().center());
+            m_item->setScale(m_oldScale);
+        }
+    }
+
+    void redo() override {
+        if (m_item) {
+            m_item->setTransformOriginPoint(m_item->boundingRect().center());
+            m_item->setScale(m_newScale);
+        }
+    }
+
+private:
+    QGraphicsItem *m_item;
+    double m_oldScale;
+    double m_newScale;
 };
 
 // --- DocumentView 実装 ---
@@ -477,12 +528,27 @@ void DocumentView::addImageFromClipboard(const QImage &image) {
 }
 
 void DocumentView::rotateSelectedItems(double angleDelta) {
-    for (auto *item : m_scene->selectedItems()) {
+    auto selected = m_scene->selectedItems();
+    if (selected.isEmpty()) return;
+
+    if (m_undoStack) {
+        m_undoStack->beginMacro("アイテム回転");
+    }
+    for (auto *item : selected) {
         if (item != m_pdfPageItem) {
             QRectF br = item->boundingRect();
             item->setTransformOriginPoint(br.center());
-            item->setRotation(item->rotation() + angleDelta);
+            double oldAngle = item->rotation();
+            double newAngle = oldAngle + angleDelta;
+            if (m_undoStack) {
+                m_undoStack->push(new RotateItemCommand(item, oldAngle, newAngle));
+            } else {
+                item->setRotation(newAngle);
+            }
         }
+    }
+    if (m_undoStack) {
+        m_undoStack->endMacro();
     }
     auto sel = m_scene->selectedItems();
     if (!sel.isEmpty() && sel.first() != m_pdfPageItem) {
@@ -492,13 +558,28 @@ void DocumentView::rotateSelectedItems(double angleDelta) {
 }
 
 void DocumentView::scaleSelectedItems(double scaleFactor) {
-    for (auto *item : m_scene->selectedItems()) {
+    auto selected = m_scene->selectedItems();
+    if (selected.isEmpty()) return;
+
+    if (m_undoStack) {
+        m_undoStack->beginMacro("サイズ変更");
+    }
+    for (auto *item : selected) {
         if (item != m_pdfPageItem) {
             QRectF br = item->boundingRect();
             item->setTransformOriginPoint(br.center());
             double currentScale = item->scale() <= 0.0 ? 1.0 : item->scale();
-            item->setScale(currentScale * scaleFactor);
+            double newScale = currentScale * scaleFactor;
+            if (newScale <= 0.05) newScale = 0.05;
+            if (m_undoStack) {
+                m_undoStack->push(new ScaleItemCommand(item, currentScale, newScale));
+            } else {
+                item->setScale(newScale);
+            }
         }
+    }
+    if (m_undoStack) {
+        m_undoStack->endMacro();
     }
     auto sel = m_scene->selectedItems();
     if (!sel.isEmpty() && sel.first() != m_pdfPageItem) {
@@ -508,25 +589,54 @@ void DocumentView::scaleSelectedItems(double scaleFactor) {
 }
 
 void DocumentView::setSelectedItemsRotation(double degrees) {
-    for (auto *item : m_scene->selectedItems()) {
+    auto selected = m_scene->selectedItems();
+    if (selected.isEmpty()) return;
+
+    if (m_undoStack) {
+        m_undoStack->beginMacro("アイテム回転");
+    }
+    for (auto *item : selected) {
         if (item != m_pdfPageItem) {
             QRectF br = item->boundingRect();
             item->setTransformOriginPoint(br.center());
-            item->setRotation(degrees);
+            double oldAngle = item->rotation();
+            if (m_undoStack) {
+                m_undoStack->push(new RotateItemCommand(item, oldAngle, degrees));
+            } else {
+                item->setRotation(degrees);
+            }
         }
+    }
+    if (m_undoStack) {
+        m_undoStack->endMacro();
     }
     emit pageContentChanged();
 }
 
 void DocumentView::setSelectedItemsScale(double scalePercent) {
+    auto selected = m_scene->selectedItems();
+    if (selected.isEmpty()) return;
+
     double sc = scalePercent / 100.0;
     if (sc <= 0.05) sc = 0.05;
-    for (auto *item : m_scene->selectedItems()) {
+
+    if (m_undoStack) {
+        m_undoStack->beginMacro("サイズ変更");
+    }
+    for (auto *item : selected) {
         if (item != m_pdfPageItem) {
             QRectF br = item->boundingRect();
             item->setTransformOriginPoint(br.center());
-            item->setScale(sc);
+            double oldScale = item->scale() <= 0.0 ? 1.0 : item->scale();
+            if (m_undoStack) {
+                m_undoStack->push(new ScaleItemCommand(item, oldScale, sc));
+            } else {
+                item->setScale(sc);
+            }
         }
+    }
+    if (m_undoStack) {
+        m_undoStack->endMacro();
     }
     emit pageContentChanged();
 }
@@ -557,64 +667,9 @@ QImage DocumentView::captureCurrentPageImage(int maxDimension) const {
     return img;
 }
 
-void DocumentView::openTextEditorDialog(QGraphicsTextItem *item, const QPointF &pos) {
-    bool isNew = (item == nullptr);
-    QString initialText = isNew ? "" : item->toPlainText();
-
-    QDialog dlg(this);
-    dlg.setWindowTitle(isNew ? "テキストを入力（全角・日本語対応）" : "テキストを編集（全角・日本語対応）");
-    dlg.resize(420, 200);
-
-    auto *vbox = new QVBoxLayout(&dlg);
-    auto *edit = new QPlainTextEdit(&dlg);
-    edit->setPlainText(initialText);
-    QFont f("Yu Gothic UI", m_fontSize > 0 ? m_fontSize : 14);
-    edit->setFont(f);
-    vbox->addWidget(edit);
-
-    auto *btnBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-    vbox->addWidget(btnBox);
-
-    connect(btnBox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-    connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-
-    edit->setFocus();
-
-    if (dlg.exec() == QDialog::Accepted) {
-        QString text = edit->toPlainText();
-        if (text.trimmed().isEmpty()) {
-            if (!isNew && item) {
-                if (m_undoStack) {
-                    m_undoStack->push(new RemoveItemCommand(m_scene, item));
-                } else {
-                    m_scene->removeItem(item);
-                    delete item;
-                }
-                emit pageContentChanged();
-            }
-            return;
-        }
-
-        if (isNew) {
-            auto *newItem = m_scene->addText(text);
-            newItem->setFont(f);
-            newItem->setDefaultTextColor(m_color);
-            newItem->setPos(pos);
-            newItem->setZValue(5);
-            newItem->setTextInteractionFlags(Qt::TextEditorInteraction);
-            newItem->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable | QGraphicsItem::ItemIsFocusable);
-            newItem->setTransformOriginPoint(newItem->boundingRect().center());
-            newItem->setSelected(true);
-
-            if (m_undoStack) {
-                m_undoStack->push(new AddItemCommand(m_scene, newItem));
-            }
-        } else {
-            item->setPlainText(text);
-            item->setTransformOriginPoint(item->boundingRect().center());
-        }
-        emit pageContentChanged();
-    }
+void DocumentView::inputMethodEvent(QInputMethodEvent *event) {
+    QGraphicsView::inputMethodEvent(event);
+    emit pageContentChanged();
 }
 
 void DocumentView::deleteSelectedItems() {
@@ -766,8 +821,28 @@ void DocumentView::mousePressEvent(QMouseEvent *event) {
         eraseAt(scenePos);
         event->accept();
         return;
-    } else if (m_currentToolMode == 1) { // テキスト入力（全角・日本語ダイアログ）
-        openTextEditorDialog(nullptr, scenePos);
+    } else if (m_currentToolMode == 1) { // テキスト入力（インライン直接入力）
+        auto *item = m_scene->addText("");
+        QFont f("Yu Gothic UI", m_fontSize > 0 ? m_fontSize : 14);
+        item->setFont(f);
+        item->setDefaultTextColor(m_color);
+        item->setPos(scenePos);
+        item->setZValue(5);
+        item->setTextInteractionFlags(Qt::TextEditorInteraction);
+        item->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable | QGraphicsItem::ItemIsFocusable);
+        item->setTransformOriginPoint(item->boundingRect().center());
+        connect(item->document(), &QTextDocument::contentsChanged, this, &DocumentView::pageContentChanged);
+
+        m_scene->setFocusItem(item);
+        item->setFocus();
+        QTextCursor cur = item->textCursor();
+        cur.movePosition(QTextCursor::Start);
+        item->setTextCursor(cur);
+
+        if (m_undoStack) {
+            m_undoStack->push(new AddItemCommand(m_scene, item));
+        }
+        emit pageContentChanged();
         event->accept();
         return;
     } else if (m_currentToolMode == 2) { // 蛍光ペン
@@ -903,7 +978,9 @@ void DocumentView::mouseDoubleClickEvent(QMouseEvent *event) {
     QGraphicsItem *item = m_scene->itemAt(scenePos, transform());
     if (item && item != m_pdfPageItem) {
         if (auto *textItem = dynamic_cast<QGraphicsTextItem*>(item)) {
-            openTextEditorDialog(textItem);
+            textItem->setTextInteractionFlags(Qt::TextEditorInteraction);
+            m_scene->setFocusItem(textItem);
+            textItem->setFocus();
             event->accept();
             return;
         }
@@ -912,7 +989,54 @@ void DocumentView::mouseDoubleClickEvent(QMouseEvent *event) {
 }
 
 void DocumentView::keyPressEvent(QKeyEvent *event) {
-    // 0. Undo / Redo（オブジェクト選択状態に関わらず確実に元に戻す）
+    // 0. ESCキー：テキスト編集中でも選択中でも、一発で解除して選択モードに戻す
+    if (event->key() == Qt::Key_Escape) {
+        QGraphicsItem *focus = m_scene->focusItem();
+        if (focus) {
+            if (auto *textItem = dynamic_cast<QGraphicsTextItem*>(focus)) {
+                if (textItem->toPlainText().trimmed().isEmpty()) {
+                    m_scene->removeItem(textItem);
+                    delete textItem;
+                } else {
+                    textItem->setTextInteractionFlags(Qt::NoTextInteraction);
+                }
+            }
+            m_scene->clearFocus();
+        }
+        m_scene->clearSelection();
+        if (m_isDrawing) {
+            if (m_currentPathItem) {
+                m_scene->removeItem(m_currentPathItem);
+                delete m_currentPathItem;
+                m_currentPathItem = nullptr;
+            }
+            if (m_currentRectItem) {
+                m_scene->removeItem(m_currentRectItem);
+                delete m_currentRectItem;
+                m_currentRectItem = nullptr;
+            }
+            m_isDrawing = false;
+        }
+        setToolMode(0);
+        emit escapeTriggered();
+        emit pageContentChanged();
+        event->accept();
+        return;
+    }
+
+    // 1. テキスト編集中なら、文字入力を最優先（Backspaceでアイテム消去しない、スペースキーを手のひらにしない）
+    QGraphicsItem *focus = m_scene->focusItem();
+    if (focus) {
+        if (auto *textItem = dynamic_cast<QGraphicsTextItem*>(focus)) {
+            if (textItem->textInteractionFlags() & Qt::TextEditorInteraction) {
+                QGraphicsView::keyPressEvent(event);
+                emit pageContentChanged();
+                return;
+            }
+        }
+    }
+
+    // 2. Undo / Redo（オブジェクト選択状態に関わらず確実に元に戻す）
     if (event->matches(QKeySequence::Undo) || 
         ((event->modifiers() & Qt::ControlModifier) && event->key() == Qt::Key_Z && !(event->modifiers() & Qt::ShiftModifier))) {
         if (m_undoStack) {
@@ -933,39 +1057,7 @@ void DocumentView::keyPressEvent(QKeyEvent *event) {
         }
     }
 
-    // 1. ESCキーで選択・移動ツールに戻る
-    if (event->key() == Qt::Key_Escape) {
-        if (m_isDrawing) {
-            if (m_currentPathItem) {
-                m_scene->removeItem(m_currentPathItem);
-                delete m_currentPathItem;
-                m_currentPathItem = nullptr;
-            }
-            if (m_currentRectItem) {
-                m_scene->removeItem(m_currentRectItem);
-                delete m_currentRectItem;
-                m_currentRectItem = nullptr;
-            }
-            m_isDrawing = false;
-        }
-        setToolMode(0);
-        emit escapeTriggered();
-        event->accept();
-        return;
-    }
-
-    // 1. テキスト編集中なら、文字入力を最優先（Backspaceでアイテム消去しない）
-    QGraphicsItem *focus = m_scene->focusItem();
-    if (focus) {
-        if (auto *textItem = dynamic_cast<QGraphicsTextItem*>(focus)) {
-            if (textItem->textInteractionFlags() & Qt::TextEditorInteraction) {
-                QGraphicsView::keyPressEvent(event);
-                return;
-            }
-        }
-    }
-
-    // 2. スペースキーで一時手のひら
+    // 3. スペースキーで一時手のひら
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
         m_spacePressed = true;
         setCursor(Qt::OpenHandCursor);
@@ -973,7 +1065,7 @@ void DocumentView::keyPressEvent(QKeyEvent *event) {
         return;
     }
 
-    // 3. コピペショートカット
+    // 4. コピペショートカット
     if (event->matches(QKeySequence::Copy)) {
         copySelectedItems();
         event->accept();
@@ -985,14 +1077,14 @@ void DocumentView::keyPressEvent(QKeyEvent *event) {
         return;
     }
 
-    // 4. Delete / Backspace で選択アイテム削除
+    // 5. Delete / Backspace で選択アイテム削除
     if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
         deleteSelectedItems();
         event->accept();
         return;
     }
 
-    // 5. 選択中オブジェクトのキー操作（拡大縮小・回転）
+    // 6. 選択中オブジェクトのキー操作（拡大縮小・回転）
     if (!m_scene->selectedItems().isEmpty()) {
         if (event->key() == Qt::Key_Plus || event->key() == Qt::Key_Equal) {
             scaleSelectedItems(1.1);
