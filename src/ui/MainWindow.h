@@ -35,6 +35,7 @@ private slots:
     void onPageSelected(int pageIndex);
     void onToolTriggered(int mode);
     void onPasteImage();
+    void onFileDropped(const QString &filePath);
 
     // ページ操作スロット
     void onRotateClockwise();

@@ -58,11 +58,14 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_thumbnailPanel, &ThumbnailPanel::insertImagesRequested, this, &MainWindow::onInsertImagesAt);
     connect(m_thumbnailPanel, &ThumbnailPanel::pageMoved, this, &MainWindow::onPageMoved);
 
+    m_documentView->setUndoStack(m_undoStack);
+
     // ドキュメントビューとのシグナル接続
     connect(m_documentView, &DocumentView::zoomChanged, this, &MainWindow::onZoomChanged);
     connect(m_documentView, &DocumentView::requestPreviousPage, this, &MainWindow::onPreviousPage);
     connect(m_documentView, &DocumentView::requestNextPage, this, &MainWindow::onNextPage);
     connect(m_documentView, &DocumentView::itemSelected, m_propertyPanel, &PropertyPanel::setValues);
+    connect(m_documentView, &DocumentView::fileDropped, this, &MainWindow::onFileDropped);
 
     // プロパティパネル変更のビュー反映
     connect(m_propertyPanel, &PropertyPanel::colorChanged, m_documentView, &DocumentView::setCurrentColor);
@@ -154,41 +157,54 @@ void MainWindow::createToolbars() {
     auto *toolGroup = new QActionGroup(this);
     toolGroup->setExclusive(true);
 
-    QAction *selectAct = m_editToolBar->addAction("↖ 選択・移動");
+    QAction *selectAct = m_editToolBar->addAction("↖ 選択・移動 (V)");
     selectAct->setCheckable(true);
     selectAct->setChecked(true);
+    selectAct->setShortcut(QKeySequence(Qt::Key_V));
     toolGroup->addAction(selectAct);
     connect(selectAct, &QAction::triggered, this, [this]() { onToolTriggered(0); });
 
-    QAction *handAct = m_editToolBar->addAction("✋ 手のひら");
+    QAction *handAct = m_editToolBar->addAction("✋ 手のひら (H)");
     handAct->setCheckable(true);
+    handAct->setShortcut(QKeySequence(Qt::Key_H));
     toolGroup->addAction(handAct);
     connect(handAct, &QAction::triggered, this, [this]() { onToolTriggered(7); });
 
     m_editToolBar->addSeparator();
 
-    QAction *penAct = m_editToolBar->addAction("🖊 ペン（手書き）");
+    QAction *penAct = m_editToolBar->addAction("🖊 ペン (P)");
     penAct->setCheckable(true);
+    penAct->setShortcut(QKeySequence(Qt::Key_P));
     toolGroup->addAction(penAct);
     connect(penAct, &QAction::triggered, this, [this]() { onToolTriggered(3); });
 
-    QAction *highlightAct = m_editToolBar->addAction("🖍 蛍光ペン");
+    QAction *highlightAct = m_editToolBar->addAction("🖍 蛍光ペン (Y)");
     highlightAct->setCheckable(true);
+    highlightAct->setShortcut(QKeySequence(Qt::Key_Y));
     toolGroup->addAction(highlightAct);
     connect(highlightAct, &QAction::triggered, this, [this]() { onToolTriggered(2); });
 
-    QAction *textAct = m_editToolBar->addAction("T 文字入れ");
+    QAction *eraseAct = m_editToolBar->addAction("🧹 消しゴム (E)");
+    eraseAct->setCheckable(true);
+    eraseAct->setShortcut(QKeySequence(Qt::Key_E));
+    toolGroup->addAction(eraseAct);
+    connect(eraseAct, &QAction::triggered, this, [this]() { onToolTriggered(8); });
+
+    QAction *textAct = m_editToolBar->addAction("T 文字入れ (T)");
     textAct->setCheckable(true);
+    textAct->setShortcut(QKeySequence(Qt::Key_T));
     toolGroup->addAction(textAct);
     connect(textAct, &QAction::triggered, this, [this]() { onToolTriggered(1); });
 
-    QAction *rectAct = m_editToolBar->addAction("□ 四角形");
+    QAction *rectAct = m_editToolBar->addAction("□ 四角形 (R)");
     rectAct->setCheckable(true);
+    rectAct->setShortcut(QKeySequence(Qt::Key_R));
     toolGroup->addAction(rectAct);
     connect(rectAct, &QAction::triggered, this, [this]() { onToolTriggered(4); });
 
-    QAction *whiteoutAct = m_editToolBar->addAction("■ 白塗り消し");
+    QAction *whiteoutAct = m_editToolBar->addAction("■ 白塗り消し (W)");
     whiteoutAct->setCheckable(true);
+    whiteoutAct->setShortcut(QKeySequence(Qt::Key_W));
     toolGroup->addAction(whiteoutAct);
     connect(whiteoutAct, &QAction::triggered, this, [this]() { onToolTriggered(5); });
 
@@ -504,5 +520,23 @@ void MainWindow::onPasteImage() {
     if (mimeData->hasImage()) {
         QImage img = qvariant_cast<QImage>(mimeData->imageData());
         m_documentView->addImageFromClipboard(img);
+    }
+}
+
+void MainWindow::onFileDropped(const QString &filePath) {
+    QFileInfo fi(filePath);
+    QString ext = fi.suffix().toLower();
+
+    if (ext == "pdf") {
+        openPdfFile(filePath);
+    } else if (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "bmp") {
+        if (m_document->pageCount() == 0) {
+            onInsertImagesAt(0);
+        } else {
+            m_document->addPagesFromImages({filePath}, m_currentPageIndex + 1);
+            m_currentPageIndex++;
+            m_thumbnailPanel->updateThumbnails(*m_document);
+            updateCurrentPageDisplay();
+        }
     }
 }

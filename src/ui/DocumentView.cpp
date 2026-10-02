@@ -13,12 +13,68 @@
 #include <QGraphicsPathItem>
 #include <QPdfDocument>
 #include <QTransform>
+#include <QUndoCommand>
+#include <QMenu>
+#include <QContextMenuEvent>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QFileInfo>
+
+// --- Undo / Redo コマンド定義 ---
+
+class AddItemCommand : public QUndoCommand {
+public:
+    AddItemCommand(QGraphicsScene *scene, QGraphicsItem *item, QUndoCommand *parent = nullptr)
+        : QUndoCommand("アイテム追加", parent), m_scene(scene), m_item(item) {}
+
+    void undo() override {
+        if (m_scene && m_item) {
+            m_scene->removeItem(m_item);
+        }
+    }
+
+    void redo() override {
+        if (m_scene && m_item && m_item->scene() != m_scene) {
+            m_scene->addItem(m_item);
+        }
+    }
+
+private:
+    QGraphicsScene *m_scene;
+    QGraphicsItem *m_item;
+};
+
+class RemoveItemCommand : public QUndoCommand {
+public:
+    RemoveItemCommand(QGraphicsScene *scene, QGraphicsItem *item, QUndoCommand *parent = nullptr)
+        : QUndoCommand("アイテム削除", parent), m_scene(scene), m_item(item) {}
+
+    void undo() override {
+        if (m_scene && m_item && m_item->scene() != m_scene) {
+            m_scene->addItem(m_item);
+        }
+    }
+
+    void redo() override {
+        if (m_scene && m_item) {
+            m_scene->removeItem(m_item);
+        }
+    }
+
+private:
+    QGraphicsScene *m_scene;
+    QGraphicsItem *m_item;
+};
+
+// --- DocumentView 実装 ---
 
 DocumentView::DocumentView(QWidget *parent)
     : QGraphicsView(parent),
       m_scene(new QGraphicsScene(this)),
       m_pdfPageItem(nullptr),
       m_currentPage(nullptr),
+      m_undoStack(nullptr),
       m_currentToolMode(0),
       m_zoomLevel(1.0),
       m_color(Qt::black),
@@ -34,8 +90,17 @@ DocumentView::DocumentView(QWidget *parent)
     setScene(m_scene);
     setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
     setDragMode(QGraphicsView::RubberBandDrag);
+    setAcceptDrops(true);
 
     connect(m_scene, &QGraphicsScene::selectionChanged, this, &DocumentView::onSelectionChanged);
+}
+
+void DocumentView::setUndoStack(QUndoStack *stack) {
+    m_undoStack = stack;
+}
+
+QUndoStack* DocumentView::undoStack() const {
+    return m_undoStack;
 }
 
 void DocumentView::loadPage(Page *page, double zoomFactor) {
@@ -219,7 +284,6 @@ void DocumentView::renderCurrentPage() {
 
     QSize unrotatedSize = m_currentPage->size() * m_zoomLevel;
 
-    // 下絵（元PDFまたは画像）のレンダリング
     QImage img;
     if (m_currentPage->isImagePage()) {
         QImage srcImg(m_currentPage->sourcePath());
@@ -254,11 +318,14 @@ void DocumentView::renderCurrentPage() {
 
 void DocumentView::setToolMode(int mode) {
     m_currentToolMode = mode;
-    if (mode == 0) {
+    if (mode == 0) { // 選択
         setDragMode(QGraphicsView::RubberBandDrag);
         setCursor(Qt::ArrowCursor);
     } else if (mode == 7) { // 手のひら
         setDragMode(QGraphicsView::ScrollHandDrag);
+    } else if (mode == 8) { // 消しゴム
+        setDragMode(QGraphicsView::NoDrag);
+        setCursor(Qt::CrossCursor);
     } else {
         setDragMode(QGraphicsView::NoDrag);
         setCursor(Qt::CrossCursor);
@@ -271,7 +338,6 @@ int DocumentView::toolMode() const {
 
 void DocumentView::setCurrentColor(const QColor &color) {
     m_color = color;
-    // 選択中アイテムのリアルタイム更新
     for (auto *item : m_scene->selectedItems()) {
         if (auto *textItem = dynamic_cast<QGraphicsTextItem*>(item)) {
             textItem->setDefaultTextColor(color);
@@ -360,6 +426,98 @@ void DocumentView::addImageFromClipboard(const QImage &image) {
     item->setZValue(4);
     item->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable);
     item->setPos(50, 50);
+
+    if (m_undoStack) {
+        m_undoStack->push(new AddItemCommand(m_scene, item));
+    }
+}
+
+void DocumentView::deleteSelectedItems() {
+    auto selected = m_scene->selectedItems();
+    for (auto *item : selected) {
+        if (item != m_pdfPageItem) {
+            if (m_undoStack) {
+                m_undoStack->push(new RemoveItemCommand(m_scene, item));
+            } else {
+                m_scene->removeItem(item);
+                delete item;
+            }
+        }
+    }
+}
+
+void DocumentView::copySelectedItems() {
+    // 選択中アイテムを記憶
+    m_clipboardItems.clear();
+    for (auto *item : m_scene->selectedItems()) {
+        if (item != m_pdfPageItem) {
+            m_clipboardItems.append(item);
+        }
+    }
+}
+
+void DocumentView::pasteItems() {
+    if (m_clipboardItems.isEmpty()) return;
+
+    m_scene->clearSelection();
+    for (auto *orig : m_clipboardItems) {
+        QGraphicsItem *newItem = nullptr;
+
+        if (auto *textItem = dynamic_cast<QGraphicsTextItem*>(orig)) {
+            auto *t = m_scene->addText(textItem->toPlainText());
+            t->setFont(textItem->font());
+            t->setDefaultTextColor(textItem->defaultTextColor());
+            t->setPos(textItem->pos() + QPointF(20, 20));
+            t->setTextInteractionFlags(Qt::TextEditorInteraction);
+            t->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable | QGraphicsItem::ItemIsFocusable);
+            t->setZValue(textItem->zValue());
+            newItem = t;
+        } else if (auto *rectItem = dynamic_cast<QGraphicsRectItem*>(orig)) {
+            auto *r = m_scene->addRect(rectItem->rect(), rectItem->pen(), rectItem->brush());
+            r->setPos(rectItem->pos() + QPointF(20, 20));
+            r->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable);
+            r->setZValue(rectItem->zValue());
+            r->setData(0, rectItem->data(0));
+            newItem = r;
+        } else if (auto *pathItem = dynamic_cast<QGraphicsPathItem*>(orig)) {
+            auto *p = m_scene->addPath(pathItem->path(), pathItem->pen());
+            p->setPos(pathItem->pos() + QPointF(20, 20));
+            p->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable);
+            p->setZValue(pathItem->zValue());
+            p->setOpacity(pathItem->opacity());
+            p->setData(0, pathItem->data(0));
+            newItem = p;
+        } else if (auto *pixItem = dynamic_cast<QGraphicsPixmapItem*>(orig)) {
+            auto *px = m_scene->addPixmap(pixItem->pixmap());
+            px->setPos(pixItem->pos() + QPointF(20, 20));
+            px->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable);
+            px->setZValue(pixItem->zValue());
+            newItem = px;
+        }
+
+        if (newItem) {
+            newItem->setSelected(true);
+            if (m_undoStack) {
+                m_undoStack->push(new AddItemCommand(m_scene, newItem));
+            }
+        }
+    }
+}
+
+void DocumentView::eraseAt(const QPointF &scenePos) {
+    QRectF eraseRect(scenePos.x() - 8, scenePos.y() - 8, 16, 16);
+    auto hitItems = m_scene->items(eraseRect);
+    for (auto *item : hitItems) {
+        if (item != m_pdfPageItem) {
+            if (m_undoStack) {
+                m_undoStack->push(new RemoveItemCommand(m_scene, item));
+            } else {
+                m_scene->removeItem(item);
+                delete item;
+            }
+            break;
+        }
+    }
 }
 
 void DocumentView::wheelEvent(QWheelEvent *event) {
@@ -390,7 +548,6 @@ void DocumentView::wheelEvent(QWheelEvent *event) {
 }
 
 void DocumentView::mousePressEvent(QMouseEvent *event) {
-    // 中ボタンまたはスペースキー押下でのドラッグ移動開始
     if (event->button() == Qt::MiddleButton || m_spacePressed || m_currentToolMode == 7) {
         m_middleButtonPressed = true;
         m_panLastPos = event->pos();
@@ -406,8 +563,13 @@ void DocumentView::mousePressEvent(QMouseEvent *event) {
 
     QPointF scenePos = mapToScene(event->pos());
 
-    if (m_currentToolMode == 1) { // テキスト
-        auto *item = m_scene->addText("テキスト入力");
+    if (m_currentToolMode == 8) { // 消しゴム
+        m_isDrawing = true;
+        eraseAt(scenePos);
+        event->accept();
+        return;
+    } else if (m_currentToolMode == 1) { // テキスト（空の状態でカーソルフォーカス）
+        auto *item = m_scene->addText("");
         QFont f = item->font();
         f.setPointSize(m_fontSize);
         item->setFont(f);
@@ -417,6 +579,10 @@ void DocumentView::mousePressEvent(QMouseEvent *event) {
         item->setTextInteractionFlags(Qt::TextEditorInteraction);
         item->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable | QGraphicsItem::ItemIsFocusable);
         item->setFocus();
+
+        if (m_undoStack) {
+            m_undoStack->push(new AddItemCommand(m_scene, item));
+        }
         return;
     } else if (m_currentToolMode == 2) { // 蛍光ペン
         m_isDrawing = true;
@@ -485,7 +651,10 @@ void DocumentView::mouseMoveEvent(QMouseEvent *event) {
 
     QPointF scenePos = mapToScene(event->pos());
 
-    if (m_currentToolMode == 2 || m_currentToolMode == 3) {
+    if (m_currentToolMode == 8) { // 消しゴム
+        eraseAt(scenePos);
+        return;
+    } else if (m_currentToolMode == 2 || m_currentToolMode == 3) {
         if (m_currentPathItem) {
             m_currentPath.lineTo(scenePos);
             m_currentPathItem->setPath(m_currentPath);
@@ -515,13 +684,35 @@ void DocumentView::mouseReleaseEvent(QMouseEvent *event) {
 
     if (m_isDrawing) {
         m_isDrawing = false;
-        m_currentPathItem = nullptr;
-        m_currentRectItem = nullptr;
+        if (m_currentPathItem) {
+            if (m_undoStack) {
+                m_undoStack->push(new AddItemCommand(m_scene, m_currentPathItem));
+            }
+            m_currentPathItem = nullptr;
+        }
+        if (m_currentRectItem) {
+            if (m_undoStack) {
+                m_undoStack->push(new AddItemCommand(m_scene, m_currentRectItem));
+            }
+            m_currentRectItem = nullptr;
+        }
     }
     QGraphicsView::mouseReleaseEvent(event);
 }
 
 void DocumentView::keyPressEvent(QKeyEvent *event) {
+    // 1. テキスト編集中なら、文字入力を最優先（Backspaceでアイテム消去しない）
+    QGraphicsItem *focus = m_scene->focusItem();
+    if (focus) {
+        if (auto *textItem = dynamic_cast<QGraphicsTextItem*>(focus)) {
+            if (textItem->textInteractionFlags() & Qt::TextEditorInteraction) {
+                QGraphicsView::keyPressEvent(event);
+                return;
+            }
+        }
+    }
+
+    // 2. スペースキーで一時手のひら
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
         m_spacePressed = true;
         setCursor(Qt::OpenHandCursor);
@@ -529,17 +720,26 @@ void DocumentView::keyPressEvent(QKeyEvent *event) {
         return;
     }
 
-    if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
-        auto selected = m_scene->selectedItems();
-        for (auto *item : selected) {
-            if (item != m_pdfPageItem) {
-                m_scene->removeItem(item);
-                delete item;
-            }
-        }
-    } else {
-        QGraphicsView::keyPressEvent(event);
+    // 3. コピペショートカット
+    if (event->matches(QKeySequence::Copy)) {
+        copySelectedItems();
+        event->accept();
+        return;
     }
+    if (event->matches(QKeySequence::Paste)) {
+        pasteItems();
+        event->accept();
+        return;
+    }
+
+    // 4. Delete / Backspace で選択アイテム削除
+    if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
+        deleteSelectedItems();
+        event->accept();
+        return;
+    }
+
+    QGraphicsView::keyPressEvent(event);
 }
 
 void DocumentView::keyReleaseEvent(QKeyEvent *event) {
@@ -556,4 +756,64 @@ void DocumentView::keyReleaseEvent(QKeyEvent *event) {
         return;
     }
     QGraphicsView::keyReleaseEvent(event);
+}
+
+void DocumentView::contextMenuEvent(QContextMenuEvent *event) {
+    QPointF scenePos = mapToScene(event->pos());
+    QGraphicsItem *item = m_scene->itemAt(scenePos, transform());
+
+    if (item && item != m_pdfPageItem) {
+        item->setSelected(true);
+        QMenu menu(this);
+        QAction *delAct = menu.addAction("🗑 このオブジェクトを削除");
+        QAction *copyAct = menu.addAction("📋 複製（コピー＆ペースト）");
+        menu.addSeparator();
+        QAction *frontAct = menu.addAction("▲ 最前面へ移動");
+        QAction *backAct = menu.addAction("▼ 最背面へ移動");
+
+        QAction *sel = menu.exec(event->globalPos());
+        if (sel == delAct) {
+            deleteSelectedItems();
+        } else if (sel == copyAct) {
+            copySelectedItems();
+            pasteItems();
+        } else if (sel == frontAct) {
+            item->setZValue(item->zValue() + 1);
+        } else if (sel == backAct) {
+            item->setZValue(qMax(1.0, item->zValue() - 1));
+        }
+    } else {
+        QGraphicsView::contextMenuEvent(event);
+    }
+}
+
+void DocumentView::dragEnterEvent(QDragEnterEvent *event) {
+    if (event->mimeData()->hasUrls()) {
+        event->acceptProposedAction();
+    } else {
+        QGraphicsView::dragEnterEvent(event);
+    }
+}
+
+void DocumentView::dragMoveEvent(QDragMoveEvent *event) {
+    if (event->mimeData()->hasUrls()) {
+        event->acceptProposedAction();
+    } else {
+        QGraphicsView::dragMoveEvent(event);
+    }
+}
+
+void DocumentView::dropEvent(QDropEvent *event) {
+    if (event->mimeData()->hasUrls()) {
+        const QList<QUrl> urls = event->mimeData()->urls();
+        if (!urls.isEmpty()) {
+            QString localFile = urls.first().toLocalFile();
+            if (!localFile.isEmpty()) {
+                emit fileDropped(localFile);
+                event->acceptProposedAction();
+                return;
+            }
+        }
+    }
+    QGraphicsView::dropEvent(event);
 }

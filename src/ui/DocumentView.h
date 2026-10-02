@@ -14,6 +14,7 @@
 #include <QColor>
 #include <QFont>
 #include <QString>
+#include <QUndoStack>
 
 class Page;
 
@@ -23,13 +24,16 @@ public:
     explicit DocumentView(QWidget *parent = nullptr);
     ~DocumentView() override = default;
 
+    void setUndoStack(QUndoStack *stack);
+    QUndoStack* undoStack() const;
+
     void loadPage(Page *page, double zoomFactor = 1.0);
     void saveCurrentAnnotations();
 
     void setZoomFactor(double zoomFactor);
     double zoomFactor() const;
 
-    // 0: 選択, 1: Text, 2: Highlight, 3: Pen, 4: Rect, 5: Whiteout, 6: Image, 7: 手のひら
+    // 0: 選択, 1: Text, 2: Highlight, 3: Pen, 4: Rect, 5: Whiteout, 6: Image, 7: 手のひら, 8: 消しゴム
     void setToolMode(int mode);
     int toolMode() const;
 
@@ -40,11 +44,17 @@ public:
 
     void addImageFromClipboard(const QImage &image);
 
+    // クリップボード複製
+    void copySelectedItems();
+    void pasteItems();
+    void deleteSelectedItems();
+
 signals:
     void zoomChanged(double zoomFactor);
     void requestPreviousPage();
     void requestNextPage();
     void itemSelected(const QColor &color, int strokeWidth, double opacity, int fontSize);
+    void fileDropped(const QString &filePath);
 
 protected:
     void wheelEvent(QWheelEvent *event) override;
@@ -53,6 +63,12 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
+
+    // ファイルドラッグ＆ドロップ対応
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragMoveEvent(QDragMoveEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
 private slots:
     void onSelectionChanged();
@@ -60,10 +76,12 @@ private slots:
 private:
     void renderCurrentPage();
     void restoreAnnotations();
+    void eraseAt(const QPointF &scenePos);
 
     QGraphicsScene *m_scene;
     QGraphicsPixmapItem *m_pdfPageItem;
     Page *m_currentPage;
+    QUndoStack *m_undoStack;
     int m_currentToolMode;
     double m_zoomLevel;
 
@@ -84,6 +102,9 @@ private:
     bool m_spacePressed;
     bool m_middleButtonPressed;
     QPoint m_panLastPos;
+
+    // コピーバッファ
+    QList<QGraphicsItem*> m_clipboardItems;
 };
 
 #endif // DOCUMENTVIEW_H
