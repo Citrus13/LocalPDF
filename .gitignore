@@ -1,0 +1,18 @@
+# ビルド成果物および一時ファイル
+build/
+bin/
+out/
+
+# ログファイル・一時ファイル
+*.log
+*.tmp
+*.bak
+
+# IDE・エディタ設定
+.vs/
+.vscode/
+*.user
+*.user.*
+CMakeUserPresets.json
+.DS_Store
+Thumbs.db
