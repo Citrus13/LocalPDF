@@ -51,7 +51,12 @@ set(HEADERS
     src/pdf/PdfCompressor.h
 )
 
-add_executable(LocalPDF WIN32 ${SOURCES} ${HEADERS})
+set(RESOURCES
+    resources/app.rc
+    resources/resources.qrc
+)
+
+add_executable(LocalPDF WIN32 ${SOURCES} ${HEADERS} ${RESOURCES})
 
 target_link_libraries(LocalPDF PRIVATE
     Qt6::Core

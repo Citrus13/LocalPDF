@@ -2,11 +2,13 @@
 // Author: Antigravity Assistant
 
 #include <QApplication>
+#include <QIcon>
 #include "ui/MainWindow.h"
 
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    app.setWindowIcon(QIcon(":/app.ico"));
 
     MainWindow window;
     window.setWindowTitle("LocalPDF");
