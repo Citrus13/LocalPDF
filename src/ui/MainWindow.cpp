@@ -5,6 +5,7 @@
 #include "ThumbnailPanel.h"
 #include "DocumentView.h"
 #include "PropertyPanel.h"
+#include "PagePreviewWidget.h"
 #include "../pdf/PdfExporter.h"
 
 #include <QMenuBar>
@@ -29,6 +30,7 @@ MainWindow::MainWindow(QWidget *parent)
       m_thumbnailPanel(new ThumbnailPanel(this)),
       m_documentView(new DocumentView(this)),
       m_propertyPanel(new PropertyPanel(this)),
+      m_previewWidget(new PagePreviewWidget(this)),
       m_zoomCombo(nullptr),
       m_selectToolAction(nullptr),
       m_document(std::make_unique<Document>()),
@@ -42,10 +44,16 @@ MainWindow::MainWindow(QWidget *parent)
     leftDock->setWidget(m_thumbnailPanel);
     addDockWidget(Qt::LeftDockWidgetArea, leftDock);
 
-    // 右ドック: プロパティ
+    // 右ドック上段: 詳細プロパティ
     auto *rightDock = new QDockWidget("詳細プロパティ", this);
     rightDock->setWidget(m_propertyPanel);
     addDockWidget(Qt::RightDockWidgetArea, rightDock);
+
+    // 右ドック下段: 全体プレビュー
+    auto *previewDock = new QDockWidget("全体プレビュー", this);
+    previewDock->setWidget(m_previewWidget);
+    addDockWidget(Qt::RightDockWidgetArea, previewDock);
+    splitDockWidget(rightDock, previewDock, Qt::Vertical);
 
     createMenusAndActions();
     createToolbars();
@@ -75,6 +83,7 @@ MainWindow::MainWindow(QWidget *parent)
         onToolTriggered(0);
     });
     connect(m_documentView, &DocumentView::fileDropped, this, &MainWindow::onFileDropped);
+    connect(m_documentView, &DocumentView::pageContentChanged, this, &MainWindow::updatePagePreview);
 
     // プロパティパネル変更のビュー反映
     connect(m_propertyPanel, &PropertyPanel::colorChanged, m_documentView, &DocumentView::setCurrentColor);
@@ -131,6 +140,11 @@ void MainWindow::createToolbars() {
     m_mainToolBar->addAction("📄 PDF出力", this, &MainWindow::onExportTriggered);
     m_mainToolBar->addAction("🖼 画像出力", this, &MainWindow::onExportImages);
     m_mainToolBar->addAction("💾 保存", this, &MainWindow::onSaveTriggered);
+
+    m_mainToolBar->addSeparator();
+
+    m_mainToolBar->addAction(m_undoStack->createUndoAction(this, "↩ 戻す"));
+    m_mainToolBar->addAction(m_undoStack->createRedoAction(this, "↪ 進む"));
 
     m_mainToolBar->addSeparator();
 
@@ -305,6 +319,16 @@ void MainWindow::updateCurrentPageDisplay() {
     Page *page = m_document->page(m_currentPageIndex);
     m_documentView->loadPage(page, m_documentView->zoomFactor());
     m_thumbnailPanel->setCurrentRow(m_currentPageIndex);
+    updatePagePreview();
+}
+
+void MainWindow::updatePagePreview() {
+    if (m_previewWidget && m_documentView && m_document && m_document->pageCount() > 0) {
+        QImage img = m_documentView->captureCurrentPageImage(400);
+        m_previewWidget->setPageImage(img, m_currentPageIndex + 1, m_document->pageCount());
+    } else if (m_previewWidget) {
+        m_previewWidget->clearPreview();
+    }
 }
 
 void MainWindow::onOpenTriggered() {

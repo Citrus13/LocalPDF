@@ -20,6 +20,11 @@
 #include <QDropEvent>
 #include <QMimeData>
 #include <QFileInfo>
+#include <QDialog>
+#include <QPlainTextEdit>
+#include <QDialogButtonBox>
+#include <QVBoxLayout>
+#include <QPainter>
 
 // --- Undo / Redo コマンド定義 ---
 
@@ -91,6 +96,10 @@ DocumentView::DocumentView(QWidget *parent)
     setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
     setDragMode(QGraphicsView::RubberBandDrag);
     setAcceptDrops(true);
+    setAttribute(Qt::WA_InputMethodEnabled, true);
+    if (viewport()) {
+        viewport()->setAttribute(Qt::WA_InputMethodEnabled, true);
+    }
 
     connect(m_scene, &QGraphicsScene::selectionChanged, this, &DocumentView::onSelectionChanged);
 }
@@ -112,6 +121,7 @@ void DocumentView::loadPage(Page *page, double zoomFactor) {
     m_zoomLevel = zoomFactor;
     renderCurrentPage();
     restoreAnnotations();
+    emit pageContentChanged();
 }
 
 void DocumentView::saveCurrentAnnotations() {
@@ -463,6 +473,7 @@ void DocumentView::addImageFromClipboard(const QImage &image) {
     if (m_undoStack) {
         m_undoStack->push(new AddItemCommand(m_scene, item));
     }
+    emit pageContentChanged();
 }
 
 void DocumentView::rotateSelectedItems(double angleDelta) {
@@ -477,6 +488,7 @@ void DocumentView::rotateSelectedItems(double angleDelta) {
     if (!sel.isEmpty() && sel.first() != m_pdfPageItem) {
         emit itemTransformSelected(sel.first()->rotation(), (sel.first()->scale() <= 0.0 ? 1.0 : sel.first()->scale()) * 100.0);
     }
+    emit pageContentChanged();
 }
 
 void DocumentView::scaleSelectedItems(double scaleFactor) {
@@ -492,6 +504,7 @@ void DocumentView::scaleSelectedItems(double scaleFactor) {
     if (!sel.isEmpty() && sel.first() != m_pdfPageItem) {
         emit itemTransformSelected(sel.first()->rotation(), (sel.first()->scale() <= 0.0 ? 1.0 : sel.first()->scale()) * 100.0);
     }
+    emit pageContentChanged();
 }
 
 void DocumentView::setSelectedItemsRotation(double degrees) {
@@ -502,6 +515,7 @@ void DocumentView::setSelectedItemsRotation(double degrees) {
             item->setRotation(degrees);
         }
     }
+    emit pageContentChanged();
 }
 
 void DocumentView::setSelectedItemsScale(double scalePercent) {
@@ -514,10 +528,102 @@ void DocumentView::setSelectedItemsScale(double scalePercent) {
             item->setScale(sc);
         }
     }
+    emit pageContentChanged();
+}
+
+QImage DocumentView::captureCurrentPageImage(int maxDimension) const {
+    if (!m_scene) return QImage();
+
+    QRectF sceneRect = m_scene->itemsBoundingRect();
+    if (m_pdfPageItem) {
+        sceneRect = sceneRect.united(m_pdfPageItem->sceneBoundingRect());
+    }
+    if (sceneRect.isEmpty() || sceneRect.width() <= 0 || sceneRect.height() <= 0) {
+        sceneRect = QRectF(0, 0, 595, 842);
+    }
+
+    QSizeF sz = sceneRect.size();
+    sz.scale(maxDimension, maxDimension, Qt::KeepAspectRatio);
+
+    QImage img(sz.toSize(), QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::white);
+
+    QPainter painter(&img);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    m_scene->render(&painter, QRectF(0, 0, sz.width(), sz.height()), sceneRect);
+    painter.end();
+
+    return img;
+}
+
+void DocumentView::openTextEditorDialog(QGraphicsTextItem *item, const QPointF &pos) {
+    bool isNew = (item == nullptr);
+    QString initialText = isNew ? "" : item->toPlainText();
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(isNew ? "テキストを入力（全角・日本語対応）" : "テキストを編集（全角・日本語対応）");
+    dlg.resize(420, 200);
+
+    auto *vbox = new QVBoxLayout(&dlg);
+    auto *edit = new QPlainTextEdit(&dlg);
+    edit->setPlainText(initialText);
+    QFont f("Yu Gothic UI", m_fontSize > 0 ? m_fontSize : 14);
+    edit->setFont(f);
+    vbox->addWidget(edit);
+
+    auto *btnBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    vbox->addWidget(btnBox);
+
+    connect(btnBox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    edit->setFocus();
+
+    if (dlg.exec() == QDialog::Accepted) {
+        QString text = edit->toPlainText();
+        if (text.trimmed().isEmpty()) {
+            if (!isNew && item) {
+                if (m_undoStack) {
+                    m_undoStack->push(new RemoveItemCommand(m_scene, item));
+                } else {
+                    m_scene->removeItem(item);
+                    delete item;
+                }
+                emit pageContentChanged();
+            }
+            return;
+        }
+
+        if (isNew) {
+            auto *newItem = m_scene->addText(text);
+            newItem->setFont(f);
+            newItem->setDefaultTextColor(m_color);
+            newItem->setPos(pos);
+            newItem->setZValue(5);
+            newItem->setTextInteractionFlags(Qt::TextEditorInteraction);
+            newItem->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable | QGraphicsItem::ItemIsFocusable);
+            newItem->setTransformOriginPoint(newItem->boundingRect().center());
+            newItem->setSelected(true);
+
+            if (m_undoStack) {
+                m_undoStack->push(new AddItemCommand(m_scene, newItem));
+            }
+        } else {
+            item->setPlainText(text);
+            item->setTransformOriginPoint(item->boundingRect().center());
+        }
+        emit pageContentChanged();
+    }
 }
 
 void DocumentView::deleteSelectedItems() {
     auto selected = m_scene->selectedItems();
+    if (selected.isEmpty()) return;
+
+    if (m_undoStack) {
+        m_undoStack->beginMacro("選択アイテム削除");
+    }
     for (auto *item : selected) {
         if (item != m_pdfPageItem) {
             if (m_undoStack) {
@@ -528,6 +634,10 @@ void DocumentView::deleteSelectedItems() {
             }
         }
     }
+    if (m_undoStack) {
+        m_undoStack->endMacro();
+    }
+    emit pageContentChanged();
 }
 
 void DocumentView::copySelectedItems() {
@@ -589,17 +699,17 @@ void DocumentView::pasteItems() {
 }
 
 void DocumentView::eraseAt(const QPointF &scenePos) {
-    QRectF eraseRect(scenePos.x() - 8, scenePos.y() - 8, 16, 16);
+    QRectF eraseRect(scenePos.x() - 10, scenePos.y() - 10, 20, 20);
     auto hitItems = m_scene->items(eraseRect);
     for (auto *item : hitItems) {
-        if (item != m_pdfPageItem) {
+        if (item != m_pdfPageItem && !m_erasedItemsInStroke.contains(item)) {
+            m_erasedItemsInStroke.insert(item);
             if (m_undoStack) {
                 m_undoStack->push(new RemoveItemCommand(m_scene, item));
             } else {
                 m_scene->removeItem(item);
                 delete item;
             }
-            break;
         }
     }
 }
@@ -649,24 +759,16 @@ void DocumentView::mousePressEvent(QMouseEvent *event) {
 
     if (m_currentToolMode == 8) { // 消しゴム
         m_isDrawing = true;
+        m_erasedItemsInStroke.clear();
+        if (m_undoStack) {
+            m_undoStack->beginMacro("消しゴム消去");
+        }
         eraseAt(scenePos);
         event->accept();
         return;
-    } else if (m_currentToolMode == 1) { // テキスト（空の状態でカーソルフォーカス）
-        auto *item = m_scene->addText("");
-        QFont f = item->font();
-        f.setPointSize(m_fontSize);
-        item->setFont(f);
-        item->setDefaultTextColor(m_color);
-        item->setPos(scenePos);
-        item->setZValue(5);
-        item->setTextInteractionFlags(Qt::TextEditorInteraction);
-        item->setFlags(QGraphicsItem::ItemIsMovable | QGraphicsItem::ItemIsSelectable | QGraphicsItem::ItemIsFocusable);
-        item->setFocus();
-
-        if (m_undoStack) {
-            m_undoStack->push(new AddItemCommand(m_scene, item));
-        }
+    } else if (m_currentToolMode == 1) { // テキスト入力（全角・日本語ダイアログ）
+        openTextEditorDialog(nullptr, scenePos);
+        event->accept();
         return;
     } else if (m_currentToolMode == 2) { // 蛍光ペン
         m_isDrawing = true;
@@ -766,6 +868,17 @@ void DocumentView::mouseReleaseEvent(QMouseEvent *event) {
         return;
     }
 
+    if (m_currentToolMode == 8 && m_isDrawing) {
+        m_isDrawing = false;
+        m_erasedItemsInStroke.clear();
+        if (m_undoStack) {
+            m_undoStack->endMacro();
+        }
+        emit pageContentChanged();
+        event->accept();
+        return;
+    }
+
     if (m_isDrawing) {
         m_isDrawing = false;
         if (m_currentPathItem) {
@@ -780,12 +893,47 @@ void DocumentView::mouseReleaseEvent(QMouseEvent *event) {
             }
             m_currentRectItem = nullptr;
         }
+        emit pageContentChanged();
     }
     QGraphicsView::mouseReleaseEvent(event);
 }
 
+void DocumentView::mouseDoubleClickEvent(QMouseEvent *event) {
+    QPointF scenePos = mapToScene(event->pos());
+    QGraphicsItem *item = m_scene->itemAt(scenePos, transform());
+    if (item && item != m_pdfPageItem) {
+        if (auto *textItem = dynamic_cast<QGraphicsTextItem*>(item)) {
+            openTextEditorDialog(textItem);
+            event->accept();
+            return;
+        }
+    }
+    QGraphicsView::mouseDoubleClickEvent(event);
+}
+
 void DocumentView::keyPressEvent(QKeyEvent *event) {
-    // 0. ESCキーで選択・移動ツールに戻る
+    // 0. Undo / Redo（オブジェクト選択状態に関わらず確実に元に戻す）
+    if (event->matches(QKeySequence::Undo) || 
+        ((event->modifiers() & Qt::ControlModifier) && event->key() == Qt::Key_Z && !(event->modifiers() & Qt::ShiftModifier))) {
+        if (m_undoStack) {
+            m_undoStack->undo();
+            emit pageContentChanged();
+            event->accept();
+            return;
+        }
+    }
+    if (event->matches(QKeySequence::Redo) || 
+        ((event->modifiers() & Qt::ControlModifier) && (event->key() == Qt::Key_Y || 
+         ((event->modifiers() & Qt::ShiftModifier) && event->key() == Qt::Key_Z)))) {
+        if (m_undoStack) {
+            m_undoStack->redo();
+            emit pageContentChanged();
+            event->accept();
+            return;
+        }
+    }
+
+    // 1. ESCキーで選択・移動ツールに戻る
     if (event->key() == Qt::Key_Escape) {
         if (m_isDrawing) {
             if (m_currentPathItem) {

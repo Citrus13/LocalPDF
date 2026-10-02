@@ -16,6 +16,7 @@ set(SOURCES
     src/ui/DocumentView.cpp
     src/ui/ThumbnailPanel.cpp
     src/ui/PropertyPanel.cpp
+    src/ui/PagePreviewWidget.cpp
     src/document/Document.cpp
     src/document/Page.cpp
     src/document/ProjectSerializer.cpp
@@ -36,6 +37,7 @@ set(HEADERS
     src/ui/DocumentView.h
     src/ui/ThumbnailPanel.h
     src/ui/PropertyPanel.h
+    src/ui/PagePreviewWidget.h
     src/document/Document.h
     src/document/Page.h
     src/document/ProjectSerializer.h

@@ -15,6 +15,7 @@
 #include <QFont>
 #include <QString>
 #include <QUndoStack>
+#include <QSet>
 
 class Page;
 
@@ -55,6 +56,12 @@ public:
     void setSelectedItemsRotation(double degrees);
     void setSelectedItemsScale(double scalePercent);
 
+    // 現在のページ（背景＋注釈すべて）を高画質レンダリングして取得
+    QImage captureCurrentPageImage(int maxDimension = 600) const;
+
+    // テキスト編集ダイアログを開く
+    void openTextEditorDialog(QGraphicsTextItem *item = nullptr, const QPointF &pos = QPointF());
+
 signals:
     void zoomChanged(double zoomFactor);
     void requestPreviousPage();
@@ -63,12 +70,14 @@ signals:
     void itemTransformSelected(double rotation, double scalePercent);
     void escapeTriggered();
     void fileDropped(const QString &filePath);
+    void pageContentChanged();
 
 protected:
     void wheelEvent(QWheelEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
@@ -113,6 +122,9 @@ private:
 
     // コピーバッファ
     QList<QGraphicsItem*> m_clipboardItems;
+
+    // 消しゴムストローク用セット
+    QSet<QGraphicsItem*> m_erasedItemsInStroke;
 };
 
 #endif // DOCUMENTVIEW_H

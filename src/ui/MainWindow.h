@@ -13,6 +13,7 @@
 class ThumbnailPanel;
 class DocumentView;
 class PropertyPanel;
+class PagePreviewWidget;
 class QToolBar;
 class QComboBox;
 class QAction;
@@ -56,6 +57,7 @@ private slots:
     void onNextPage();
     void onZoomComboChanged(int index);
     void onZoomChanged(double zoomFactor);
+    void updatePagePreview();
 
 private:
     void createMenusAndActions();
@@ -65,6 +67,7 @@ private:
     ThumbnailPanel *m_thumbnailPanel;
     DocumentView *m_documentView;
     PropertyPanel *m_propertyPanel;
+    PagePreviewWidget *m_previewWidget;
 
     QToolBar *m_mainToolBar;
     QToolBar *m_pageToolBar;
